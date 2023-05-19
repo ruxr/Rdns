@@ -1,0 +1,566 @@
+#!/bin/sh
+H="Скрипт автоматизации ведения DNS записей и таблицы объектов ЛВС
+
+	@(#) Rdns V3.1 (C) 2010-2023 by Roman Oreshnikov
+
+	Это бесплатное ПО поставляется без каких-либо ГАРАНТИЙ
+
+Использование: Rdns [параметр]... [файл]...
+
+Параметры:
+  -c CUR  Создать файл CUR с актуальными DNS записями
+  -d DIR  В каталоге DIR создать файлы описания зон
+  -h      Вывод этого текста
+  -l LST  Создать файл LST со списком зон в формате конфигурации BIND
+  -t TAB  Создать файл TAB с таблицей объектов ЛВС
+  -u      Выполнить актуализацию DNS записей
+  -x      Загрузить DNS записи с NS серверов
+
+Сообщать об ошибках <r.oreshnikov@gmail.com>"
+End() { echo "${1:+${0##*/}: }${*# }" >&2; exit 1; }
+Chk() {
+	[ -z "$1" ] || End "Параметр -$P уже задан${2:- как '$1'!}"
+	case ${2:-/$OPTARG/} in
+	//|/*//*|*[\ ]*|/-*) End "Недопустимое значение '$OPTARG' для -$P!"
+	esac
+}
+while getopts c:d:hl:t:ux P; do
+	case $P in
+	c) Chk "$RDNS_C"; export RDNS_C=$OPTARG;;
+	d) Chk "$RDNS_D"; export RDNS_D=$OPTARG;;
+	h) echo "$H"; exit;;
+	l) Chk "$RDNS_L"; export RDNS_L=$OPTARG;;
+	t) Chk "$RDNS_T"; export RDNS_T=$OPTARG;;
+	u) Chk "$RDNS_U" !; export RDNS_U=y;;
+	x) Chk "$RDNS_X" !; export RDNS_X=y;;
+	?) End "" "'${0##*/} -h' для дополнительной информации"
+	esac
+done
+shift $(($OPTIND - 1))
+[ $# = 0 ] && End "Отсутствует входной файл!"
+for P do [ -f "$P" -a -r "$P" ] || End "Файл '$P' недоступен!"; done
+[ -z "$RDNS_D" ] || mkdir -p "$RDNS_D" 2>/dev/null
+[ $? = 0 ] || End "Ошибка создания каталога '$RDNS_D'!"
+LANG=C
+awk '
+function Msg(s) { print "Rdns: " s }
+function End(s) { Msg(s); exit 1 }
+function Err(s) { print FILENAME "[" FNR "]: " s; if(!--E) exit }
+function ErrS(v, s) { Err("\"" v "\" - " s) }
+function ErrD(s) { ErrS(s, "недопустимое доменное имя") }
+function ErrL(s, v, l){ ErrS(s, l "ссылка уже задана как " v) }
+function ErrP(s, v) { ErrS(s, "недопустимое значение для " v) }
+function ErrU(s) { ErrS(s, "уже используется") }
+function ErrV(s, v, u) { ErrS(v, s " уже задан как \"" u "\"") }
+function ErrR(d, t, r) { ErrS(d " IN " t " " r, "RR уже зарегистрирована") }
+function ErrN(s, t) { ErrS(s, "незарегистрированная" t " зона") }
+function ErrZ(s, t) { ErrS(s, t "в зарезервированном IP блоке") }
+function Wrn(s) {
+	if(s) { print " " s; --E }
+	if(!E) End("Слишком много ошибок в исходных данных")
+	if(!s && E != MaxE) End("Некорректные исходные данные")
+}
+function chkNF(s, d) {
+	return s || Err("Строка не в формате " (d ? "DNS записи" : $1))
+}
+function isTTL(n, s) {
+	if(s !~ /^[1-9][0-9]*$/) ErrP(s, n)
+	else if(s < 300) ErrS(s, "значение для " n " очень маленькое")
+	else if(s > 604800) ErrS(s, "значение для " n " очень большое")
+	else return s
+}
+function isU16(s) { return s ~ /^([0-9]|[1-9][0-9]*)$/ && s <= 0xffff }
+function isMac(m) {
+	m = tolower(m)
+	if(!mac) {
+		if(m ~ (mac = "^([0-9a-f]{2}:){5}[0-9a-f]{2}$")) return m
+		if(m ~ (mac = "^([0-9a-f]{4}\\.){2}[0-9a-f]{4}$")) return m
+		mac = ""
+	} else if(m ~ mac) return m
+}
+function isIP(i, n, a) {
+	if(!(i = split(i, a, ".")) || i > 4 || i < n) return
+	while(i) if(a[i] !~ /^(0|[1-9][0-9]{,2})$/ || a[i--] > 255) return
+	return ip = or(lshift(a[1], 24), lshift(a[2], 16),
+			lshift(a[3], 8), a[4])
+}
+function setName(s) {
+	name = s == "@" ? origin : tolower(s)
+	if(name !~ /\.$/) name = name "." (origin == "." ? "" : origin)
+}
+function isArpa(s, n, i, a) {
+	setName(s)
+	i = split(name, a, ".")
+	if(name ~ /\.?in-addr\.arpa\.$/ && i < 8 && i >= 3 + n)
+	for(n = i -= 3; i && a[i] ~ /^(0|[1-9][0-9]{,2})$/ && a[i] < 256; i--);
+	return i ? ErrS(s, "не является IP адресом в реверсной нотации") :
+	ip = or(lshift(a[n--], 24), lshift(a[n--], 16), lshift(a[n--], 8), a[n])
+}
+function isReIP() {
+	return (and(ip, 0xff000000) == 0 ||
+		and(ip, 0xff000000) == 0x7f000000 ||
+		and(ip, 0xffff0000) == 0xa9fe0000 ||
+		and(ip, 0xffffff00) == 0xc0000200 ||
+		and(ip, 0xfffe0000) == 0xc6120000 ||
+		and(ip, 0xf0000000) == 0xf0000000)
+}
+function isName(s) {
+	setName(s)
+	return (name !~ /^(([a-z0-9](-?[a-z0-9])*\.)+|\.)$/ ||
+		name ~ /[^.]{64,}/ || length(name) > 255) ? name = "": name
+}
+function isReName() {
+	return name ~ /^(localhost\..*|(.*\.)*(arpa|localhost))?\.$/
+}
+function isOrigin(s) { return isName(s) ? name : ErrD(s) }
+function isDomain(s) { return isName(s) && !isReName() ? name : ErrD(s) }
+function int2Arpa() {
+	return	and(ip, 255) "." and(rshift(ip, 8), 255) "."\
+		and(rshift(ip, 16), 255) "."\
+		and(rshift(ip, 24), 255) ".in-addr.arpa."
+}
+function int2IP(i) {
+	return	and(rshift(i, 24), 255) "." and(rshift(i, 16), 255) "."\
+		and(rshift(i, 8), 255) "." and(i, 255)
+}
+function newJoin(s, d) {
+	if(s ~ /^[?-]$/) return
+	if(!(s in Lnk)) Lnk[s][1] = d
+	else if(!(2 in Lnk[s])) Lnk[s][2] = d
+	else return ErrU(s)
+	return 1
+}
+function inZone(s) { do if(s in Zone) return s; while(sub(/[^.]+\./, "", s)) }
+function newZone(d) {
+	if(d in Zone) return ErrS(d, "зона уже зарегистрирована")
+	RR[d][Zone[d] = ""] = (n = inZone(d)) ? n : d
+	for(i = 2; i++ < NF; ) {
+		if(!isDomain($i)) return
+		if(RR[d]["NS"][name]) return ErrU(name)
+		RR[d]["NS"][name] = ttl
+		if(i > 3 || (ns && name != ns)) continue
+		Zone[d] = ns = name
+		if(d !~ /\.arpa\.$/) {
+			RR[n = "localhost." d][""] = d
+			RR[n]["A"]["127.0.0.1"] = ttl
+		}
+	}
+	return 1
+}
+function newZoneIP() {
+	match($2, "([^/]*)/(.*)", a)
+	if(isIP(a[1]) == "") return ErrP(a[1], "IP зоны")
+	if(a[2] !~ /^(1?[0-9]|2[0-4])$/) return ErrP(a[2], "битовой маски")
+	if(and(ip, rshift(0xffffffff, a[2])))
+		return ErrS(a[2], "битовая маска мала")
+	if(isReIP()) return ErrZ($2, "зона ")
+	n = int2Arpa()
+	s = 4 - rshift(a[2] + 7, 3)
+	v = and(rshift(256, and(a[2], 7)), 255)
+	match(n, "(0\\.){" s "}([0-9]*)(.*)", a)
+	while(newZone(a[2] a[3]) && --v > 0) a[2]++
+}
+function newRR(v, d, t, r, x) {
+	if((t == "PTR" ? isArpa(d) : isDomain(d)) == "") return
+	if(!(z = inZone(name))) return ErrN(name)
+	if(name in RR) {
+		if(t ~ /CNAME|PTR/) return ErrU(name)
+		for(s in RR[name]) if(s)
+		if(s ~ /CNAME|PTR/ || (t == "A" && x > 0 && x < 3 && s != "NS"))
+			return ErrU(name)
+	}
+	if(t == "MX") {
+		if(!isU16(r)) return ErrP(r, "MX приоритета")
+		d = x; x = r; r = d
+	}
+	d = name
+	if(t == "A") {
+		if((isIP(r, 4)) == "") return ErrS(r, "не IP адрес")
+		if(isReIP()) return ErrZ(r)
+		if(!inZone(int2Arpa())) return ErrN(r, " IP")
+		if(d in RR && t in RR[d] && RR[d][t][r]) return ErrR(d, t, r)
+	} else if(!isDomain(r)) return
+	else if(t ~ /CNAME|MX/ && !(name in RR && "A" in RR[name]))
+		return ErrS(name, "отсутствует IP адрес")
+	else if(t == "MX") {
+		if(d in RR) for(s in RR[d][t])
+		if(s ~ ("^" x " ") || s ~ (" " name "$")) return ErrR(d, t, s)
+		r = x " " name
+	} else r = name
+	if(rIP) {
+		if(t == "PTR") IP[int2IP(ip)] = r
+		else if(t == "A" && !(r in IP)) IP[r] = d
+	}
+	if(!RR[d][""]) RR[d][""] = z
+	return RR[d][t][r] = v
+}
+function newIP(d, i, x) {
+	return newRR(ttl, d, "A", i, x) && newRR(ttl, int2Arpa(), "PTR", d)
+}
+function newObj(a, i, l, m, s, z) {
+	Obj[n][1] = "?"
+	for(f = 1; f++ < NF; )
+		if($f ~ /^@/) {
+			if($f !~ lnk) return ErrP($f, "ссылки")
+			else if(l ~ "/") return ErrL($f, l, "локальная ")
+			else if($f !~ "/") l = tolower($f)
+			else if(l) return ErrL($f, l)
+			else l = d $f
+			sub(/@/, "", l)
+			if(l == n) return ErrS($f, "ссылка на себя")
+			if(l in Obj && (t = Obj[l][1]) && t != "-")
+				return ErrS($f, "ссылка на физический объект")
+			if(t = Obj[l][2]) { t = t " "; Obj[l][1] = "-" }
+			Obj[l][2] = t n
+		} else if($f ~ /^\$/) {
+			if(z) ErrV("заводской №", $f, i)
+			else if($f in Use) return ErrU($f)
+			else { Use[z = $f]; sub(/\$/, "", $f); Obj[n][7] = $f }
+		} else if($f ~ /^#/) {
+			if(i) ErrV("инвентарный №", $f, i)
+			else if($f in Use) return ErrU($f)
+			else { Use[i = $f]; sub(/#/, "", $f); Obj[n][8] = $f }
+		} else if($f ~ /^\//) {
+			sub(/^.*\s+\/\s*/, ""); sub(/\s+$/, "")
+			gsub(/\s+/, " "); Obj[n][9] = $0; break
+		} else if(t = isMac($f)) {
+			if(m) return ErrV("mac-адрес", $f, m)
+			else if((m = Use[t]) && m != d) return ErrU($f)
+			else Use[Obj[n][5] = m = t] = d
+		} else if(f == 2) {
+			if($f ~ /^[?-]$/) Obj[n][1] = $f
+			else if(newJoin($2, n)) Obj[n][1] = $2
+			else return
+		} else if($f in a) return ErrU($f)
+		else a[$f]
+	asorti(a)
+	for(i in a) s = s ? s " " a[i] : a[i]
+	Obj[n][6] = s
+}
+BEGIN {
+	Msg("Чтение исходных данных")
+	E = MaxE = 25	# Количество ошибок до принудительного завершения
+	origin = "."	# Актуальный $ORIGIN
+	ttl = 10800	# Актуальный $TTL
+	# name		# Актуальное доменное имя
+	# ns		# Актуальный NS
+	# ip		# Актуальный IP адрес
+	# rIP		# Флаг привязки IP
+	# NS[ns] = "( ip;)+| ns;"	# Известные NS
+	# RR[domain][""] = zone		# Доменная зона
+	# RR[domain][type][rdata] = ttl	# DNS записи
+	# IP[ip] = domain		# Привязка IP к домену
+	# Zone[domain] = ""|ns		# Зоны, наши если ns
+	# Use[val]			# Используемые данные
+	# Lnk[line][1|2] = obj|line	# Соединительная линия
+	# Obj[obj][1-8]			# Объект
+	#	1 - линия
+	#	2 - сопряженный объект
+	#	3 - domain
+	#	4 - ip
+	#	5 - mac-address
+	#	6 - options
+	#	7 - заводской №
+	#	8 - инвентарный
+	#	9 - note
+	t = "[a-z0-9A-Z]"
+	lnk = "^@/?(" t "+(-" t "+)*\\.)*" t "+(-" t "+)*$"
+	obj = "^" t "+(-" t "+)*(/.*)*$"
+}
+/^\s*([#;].*)*$/ { next }
+{
+	sub(/\s+;.*$/, "")
+	if($1 == "$ORIGIN") {
+		if(chkNF(NF == 2) && isOrigin($2)) origin = name
+	} else if($1 == "$TTL") {
+		if(chkNF(NF == 2) && isTTL($1, $2)) ttl = $2
+	} else if($1 == ".Zone") {
+		if(chkNF(NF > 1))
+		if($2 ~ /\//) newZoneIP()
+		else if(!isName($2)) ErrS($2, "недопустимое имя доменной зоны")
+		else if(isReName()) ErrS($2, "в зарезервированной зоне")
+		else newZone(name)
+	} else if($1 == ".Join") {
+		if(chkNF(NF == 3))
+		if($2 == $3) ErrU($2)
+		else if($2 ~ /^[?-]$/) ErrP($2, $1)
+		else if($3 ~ /^[?-]$/) ErrP($3, $1)
+		else if(newJoin($2, " " $3)) newJoin($3, " " $2)
+	} else if($2 ~ /^([0-9]+|A|AAAA|CNAME|IN|MX|NS|PTR|SOA|SRV|TXT)$/) {
+		i = 2; v = ttl
+		if($i ~ /^[0-9]/ && (v = isTTL("ttl", $(i++))) == "") next
+		if($i == "IN") i++
+		if($i == "") chkNF(0, 1)
+		else if($i ~ /^(AAAA|NS|SOA|SRV|TXT)$/)
+			ErrS($i, "этот тип DNS записей не обрабатывается")
+		else if($i !~ /^(A|CNAME|MX|PTR)$/)
+			ErrS($i, "неизвестный тип DNS записи")
+		else if(rIP = chkNF(NF == i + ($i == "MX" ? 2 : 1), 1))
+			newRR(v, $1, $i, $++i, $++i)
+	} else if($2 ~ /^([0-9]+\.){3}[0-9]+$/) {
+		rIP = !isU16($3)
+		for(i = 1; i++ < NF;)
+		if(i == 3 && NF == 3 && !rIP) {
+			match(name, /^([^.]*[^\.0-9]+)([0-9]*)(\..*)$/, a)
+			if((v = length($3)) < (s = length(a[2]))) v = s
+			s = a[1] "%0" v "d" a[3]; v = ip; n = a[2]
+			while($i-- && newIP(sprintf(s, ++n), int2IP(++v), ""));
+			next
+		} else if(!newIP($1, $i, i)) next
+	} else if($1 ~ obj) {
+		match($1, "([^/]*)(/?.*)", a)
+		if((n = (d = tolower(a[1])) a[2]) in Obj) ErrU(n)
+		else newObj()
+	} else ErrD($1)
+}
+END {
+	delete Use
+	Wrn()
+	Msg("Проверка исходных данных")
+	asorti(Zone, a, "cmp_domain")
+	for(z in a) {
+		d = RR[z = a[z]][""]
+		while(sub(/[^.]*\./, "", d)) if(d in Zone) break
+		if(d && d != RR[z][""]) Wrn("Зона " z " объявлена до " d)
+		if(ns in RR[z]["NS"]) for(d in RR[z]["NS"]) if(!(d in NS)) {
+			v = ""; for(r in RR[d]["A"]) v = v " " r ";"
+			if(NS[d] = v) continue
+			z = inZone(d)
+			if(Zone[z] || Zone[RR[z][""]]) Wrn("Не задан IP для " d)
+			else NS[d] = " " d ";"
+		}
+	}
+	Wrn()
+	if(n = ENVIRON["RDNS_T"]) SaveTab()
+	if(n = ENVIRON["RDNS_L"]) SaveLst()
+	# зачистка Zone и RR от несущественных записей
+	for(d in Zone) if(!Zone[d] && Zone[z = RR[d][""]])
+		for(n in RR[d]["NS"]) {
+			if(!Zone[RR[n][""]]) RR[n][""] = z
+			for(r in RR[n]["A"]) if(!Zone[RR[r][""]]) RR[r][""] = z
+		}
+	for(d in RR) if(!Zone[RR[d][""]]) delete RR[d]
+	for(z in Zone) if(!Zone[z]) delete Zone[z]
+	if(n = ENVIRON["RDNS_D"]) SaveZone()
+	for(r in RR[ns]["A"]) ip = r
+	n = ENVIRON["RDNS_C"]
+	if(ENVIRON["RDNS_X"]) {
+		Msg("Получение DNS записей с " ns "(" ip ")")
+		for(z in Zone) {
+			ttl = s = "dig axfr @" ip " " z " 2>/dev/null"
+			while(s | getline > 0) if(GetRR()) break
+			close(s)
+			if(ttl) End("Ошибка получения зоны " z " c " ns)
+		}
+	} else if(n) {
+		if(getline <n > 0) {
+			Msg("Чтение DNS записей из файла \"" n "\"")
+			do if(GetRR()) break; while(getline <n)
+			if(ttl) End("Ошибка формата файла")
+		}
+		close(n)
+	}
+	if(!ttl) UpdateDNS()
+	if(n) SaveDNS()
+	Msg("Успешное завершение работы")
+}
+function GetRR() {
+	if($0 ~ /^\s*(;.*)*$/ || $1 ~ /_/) return
+	if($1 == "zone") { z = $2; return }
+	if($3 != "IN") return ttl = 1
+	if($4 !~ /^(A|PTR|NS|CNAME|MX)$/) return
+	r = $4 == "MX" ? $5 " " $6 : $5
+	$1 = tolower($1)
+	if($1 in RR && $4 in RR[$1] && r in RR[$1][$4]) {
+		if((v = RR[$1][$4][r]) !~ /+/) RR[$1][$4][r] = "+" v
+	} else {
+		if(!RR[$1][""]) RR[$1][""] = z; RR[$1][$4][r] = "-" $2
+	}
+	ttl = 0
+}
+function cmp_domain(i1, v1, i2, v2, a, b) {
+	i1 = split(i1, a, ".")
+	i2 = split(i2, b, ".")
+	for(;;) {
+		if(a[i1] > b[i2]) return 1
+		if(a[i1--] < b[i2--]) return -1
+		if(!i1 && !i2) return 0
+		if(!i1) return -1
+		if(!i2) return 1
+	}
+}
+function cmp_ip(i1, v1, i2, v2, a, b) {
+	i1 = split(i1, a, ".")
+	i2 = split(i2, b, ".")
+	for(i1 = 0; i1++ < 4;) {
+		if(a[i1] > b[i1]) return 1
+		if(a[i1] < b[i1]) return -1
+	}
+}
+function Htm(s) {
+	gsub(/&/, "\\&amp;", s)
+	gsub(/</, "\\&lt;", s)
+	gsub(/>/, "\\&gt;", s)
+	return s
+}
+function OutRR() {
+	v = (v = RR[d][t][r]) == ttl ? "" : "$TTL\t" (ttl = v) "\n"
+	if(d == name) s = "\t"
+	else {
+		if((name = s = d) !~ "^[^.]+\\." origin "$") {
+			origin = d; sub(/^[^.]*\./, "", origin)
+			v = v "$ORIGIN\t" origin "\n"
+		}
+		sub("\\." origin, "", s)
+		if(length(s) < 8) s = s "\t"
+	}
+	gsub("\\." origin, "", r)
+	print v s "\t" t "\t" r >f
+}
+function SaveDNS() {
+	Msg("Сохранение актуальных DNS записей в файл \"" n "\"")
+	asorti(RR, a, "cmp_domain")
+	asorti(Zone, b, "cmp_domain")
+	for(z in b) {
+		print "zone", (z = b[z]) >n
+		for(d in a) if(RR[d = a[d]][""] == z) for(t in RR[d])
+			if(t) for(r in RR[d][t])
+				print d, RR[d][t][r], "IN", t, r >n
+	}
+}
+function SaveLst() {
+	Msg("Сохранение списка зон в файл \"" n "\"")
+	f = "zone \"%%s\" {\n\ttype %s;\n\tfile \"%%s\";%s\n};\n"
+	p = sprintf(f, "primary", "")
+	s = sprintf(f, "secondary", "\n\tprimaries {%s };")
+	asorti(Zone, a, "cmp_domain")
+	for(z in a) {
+		z = t = a[z]; sub(/\.$/, "", t)
+		if(Zone[z]) printf(p, t, t) >n
+		else if(ns in RR[z]["NS"]) {
+			f = ""; for(d in RR[z]["NS"]) if(d != ns) f = f NS[d]
+			if(f) printf(s, t, t, f) >n
+		}
+	}
+}
+function SaveZone() {
+	Msg("Создание файлов описания зон в каталоге \"" n "\"")
+	soa = ns " root." ns " (\n\t\t\t" strftime("%s", systime())\
+		"\n\t\t\t86400\n\t\t\t43200\n\t\t\t604800\n\t\t\t10800\n\t\t)"
+	asorti(RR, a, "cmp_domain")
+	for(z in Zone) {
+		f = n "/" z; sub(/\.$/, "", f)
+		r = soa; gsub("\\." (name = origin = z), "", r)
+		ttl = RR[z]["NS"][ns]
+		print "$TTL\t" ttl "\n@\tIN\tSOA\t" r >f
+		for(d in a) if(RR[d = a[d]][""] == z || d == z)
+			for(t in RR[d]) if(t) for(r in RR[d][t]) OutRR()
+		close(f)
+	}
+}
+function UpdateDNS(a, b, c) {
+	Msg("Проверка DNS записей на наличие обновлений")
+	for(d in RR) for(t in RR[d]) if(t) for(r in RR[d][t])
+		if((v = RR[d][t][r]) ~ /\+/) sub(/\+/, "", RR[d][t][r])
+		else if(v ~ /-/) { delete RR[d][t][r]; sub(/-/, "", v)
+			a[RR[d][""]]["delete " d " " v " IN " t " " r]
+		} else a[RR[d][""]]["add " d " " v " IN " t " " r]
+	if(!(ttl = length(a))) return
+	c[i = 1] = "server " ip
+	for(z in a) {
+		c[++i] = "zone " z
+		for(s = asorti(a[z], b); s > 0;)
+			print " " (c[++i] = "update " b[s--])
+		c[++i] = "send"
+	}
+	s = "бновление DNS записей на " ns " (" ip ")"
+	if(!ENVIRON["RDNS_U"]) End("Требуется о" s)
+	Msg("О" s)
+	c[++i] = "answer"
+	s = "nsupdate 2>&1"
+	for(i in c) print c[i] |& s
+	s |& getline
+	close(s)
+	if($0 !~ /^Answer:$/) End("Ошибка обновления")
+}
+function LnkObj(l, a) {
+	a[d]
+	do { a[l]; sub(/ /, "", l)
+	} while((l = Lnk[l][1] in a ? Lnk[l][2] : Lnk[l][1]) ~ / /)
+	if(l) { Obj[d][2] = l; if(!Obj[d][5]) Obj[d][5] = Obj[l][5] }
+}
+function SaveTab(a) {
+	# Привязка IP к объекту
+	for(i in IP) {
+		v = s = d = IP[i]
+		while(sub(/\.[^.]*$/, "", s)) if(s in Obj && (v = s)) break
+		if(v == d) {
+			if(d in NS) delete IP[i]
+			else Wrn("Не найден объект для " d)
+		} else if((v = Obj[s][3]) && d != v)
+			Wrn(d ": объект " s " использует " v)
+		else {
+			Obj[s][3] = d
+			if((v = Obj[s][2]) && v !~ / /) s = Obj[s][2]
+			Obj[IP[i] = s][d]; Obj[s][i]
+		}
+	}
+	# Привязка DNS записей типа A и CNAME
+	for(d in RR) for(t in RR[d])
+		if(t == "A") { for(r in RR[d][t]) if(r in IP) Obj[IP[r]][d] }
+		else if(t == "CNAME") for(s in RR[d][t]) for(r in RR[s]["A"])
+			if(r in IP) Obj[IP[r]][d]
+	delete IP
+	# Проверка ссылок и поиск сопряженных объектов
+	for(d in Obj) {
+		l = Obj[d][1]
+		if(Obj[d][2] && d !~ "/") {
+			if(!Obj[d][3]) Wrn("Нет DNS записей для ссылки " d)
+			if(!l) delete Obj[d]
+			else if(Obj[d][2] !~ / /) delete Obj[d][2]
+		}
+		if(l !~ /^[?-]?$/) LnkObj(" " l)
+	}
+	Wrn()
+	Msg("Сохранение таблицы объектов в файл \"" n "\"")
+	t = "Таблица объектов Rdns"
+	print "<!DOCTYPE html>\n<HTML>\n<HEAD>\n<META",
+	"HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html;",
+	"charset=utf-8\" />\n<META HTTP-EQUIV=\"Pragma\"",
+	"CONTENT=\"no-cache\" />\n<TITLE>" t "</TITLE>\n</HEAD>\n"\
+	"<BODY>\n<H2 ALIGN=\"center\">" t "</H2>\n<TABLE BORDER=\"1\"",
+	"CELLSPACING=\"0\" CELLPADING=\"0\">\n<TR>"\
+	TH("Техническое средство[/порт]", "Объект")\
+	TH("Маркировка порта СКС или соединительного кабеля", "Линия")\
+	TH("Сопряженный объект", "Подключение")\
+	TH("Сетевое имя технического средства", "DNS имя")\
+	TH("IP адрес технического средства", "IP адрес")\
+	TH("ARP MAC-адрес", "MAC адрес")\
+	TH("Параметры подключения", "Параметры")\
+	TH("Заводской номер ТС", "Зав.№")\
+	TH("Инвентарный номер ТС", "Инв.№")\
+	TH("Дополнительная информация", "Примечания") >n
+	asorti(Obj, a)
+	for(d in a) print TR(a[d]) >n
+	print "</TABLE>\n</BODY>\n</HTML>" >n
+	close(n)
+}
+function TH(t, v) { return "<TH TITLE=\"" t "\">" v }
+function TR(n, a, d, i, s, t, v) {
+	for(s in Obj[n]) if(s ~ /\.$/) d[s]; else if(s ~ /\./) i[s]
+	asorti(d, a, "cmp_domain")
+	for(s in a) t = t ? t a[s] " " : a[s] " "
+	gsub(/\. /, " ", t)
+	sub(/ $/, "", t)
+	Obj[n][3] = t
+	asorti(i, a, "cmp_ip")
+	for(s in a) v = v ? v " " a[s] : a[s]
+	Obj[n][4] = v
+	v = Htm(n)
+	for(s = 0; s++ < 9;) {
+		t = Htm(Obj[n][s])
+		if(s ~ /[23]/) gsub(" ", "<BR>", t)
+		v = v "<TD>" t
+	}
+	return "<TR><TD>" v
+}' "$@"

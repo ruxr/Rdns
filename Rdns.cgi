@@ -1,299 +1,120 @@
-#!/usr/bin/perl
-#
-my $SIG = '
-	@(#) Rdns.cgi V2.4 (C) 2010-2019 by Roman Oreshnikov
-';
-#
-#	CGI-скрипт поиска по данным сформированным Rdns.pl
-#
-use strict;
-use integer;
-use warnings;
-use DBI;
-
-# Имя SQLite version 3 базы
-my $DBNAME = '/home/noc/var/dns/dns.db';
-
-#
-# Секция HTML утилит
-#
-my %t2h = qw/" &quot; < &lt; > &gt; & &amp;/;	# Экранируемые символы
-my @X = qw/0 1 2 3 4 5 6 7 8 9 A B C D E F/;	# Шестнадцатиричные цифры
-
-# a $key[, @val] - Сборка атрибута с экранированием значения
-sub a { $_ = "@_"; s/([<>"])/$t2h{$1}/g; s/([^ ]+) ?(.*)/$1="$2"/; $_ }
-
-# h @txt - Экранирование строки для использования вне тэгов
-sub h { map {defined $_ or $_ = ''} @_; $_ = "@_"; s/([&<>])/$t2h{$1}/g; $_ }
-
-# b @txt - Экранирование блока строк
-sub b { h @_; s/\n/<BR \/>/g; $_ }
-
-# x $char - Получить шестнадцатиричный код символа
-sub x { my $c = ord $_[0]; '%'. $X[($c >> 4) & 15]. $X[$c & 15] }
-
-# u @url - Экранирование URL
-sub u { $_ = "@_"; s/([^!#\$&'()+-;=?-Z_a-z~])/x $1/eg; $_ }
-
-# p @key_val - Сбор и экранирование параметров URL
-sub p {
-	my($r, $i, $t) = ('', '?');
-	foreach $t (@_){
-		$_ = $t;
-		s/([^a-zA-Z,-: \$()\@_~])/x $1/eg;
-		s/ /+/g;
-		$r .= $i. $_;
-		$i = ($i eq '=') ? '&' : '='
+#!/bin/sh
+export LANG=C
+awk '
+{
+	if($0 ~ Bnd) getline
+	else next
+	if($0 !~ Str) next
+	sub(Str, "")
+	gsub(/"/, "")
+	sub(/\s*$/, "")
+	n = $0
+	getline
+	if($0 !~ /^\s*$/) next
+	getline
+	sub(/^\s*/, "")
+	sub(/\s*$/, "")
+	if(n == "col") { if($0 ~ /^[0-9]$/) N = $0; next }
+	else if($0 ~ /[\\{}()\[\]]/) {
+		s = $0; gsub(/\\./, " ", s); if(s ~ /\\/) next
+		gsub(/\[[^\]]+\]/, " ", s); if(s ~ /[\[\]]/) next
+		gsub(/\{[0-9]*,?[0-9]*\}/, " ", s); if(s ~ /[\{\}]/) next
+		while(gsub(/\([^\)]+\)/, " ", s));
+		if(s ~ /[\(\)]/) next
 	}
-	$r
+	S = A = $0
+	gsub(/"/, "\\&quot;", A)
 }
-
-#
-# Секция разбора параметров CGI
-#
-my %CGI;	# GET/POST/COOKIE: name => value
-
-# Set $CGI $pattern - Заполнение %CGI разбором $_
-sub Set {
-	my($h, $p, @s) = @_;
-	s/\+/ /g;
-	foreach (split /$p/) {
-		foreach (split /=/) {
-			s/%([0-9A-Fa-f]{2})/chr hex $1/eg;
-			push @s, $_;
-			last if $#s
-		}
-		$_ = shift @s;
-		$h->{$_} = @s ? shift @s : ''
+function cmp_domain(i1, v1, i2, v2, a, b) {
+	i1 = split(i1, a, "[.\n]")
+	i2 = split(i2, b, "[.\n]")
+	for(;;) {
+		if(a[i1] > b[i2]) return 1
+		if(a[i1--] < b[i2--]) return -1
+		if(!i1 && !i2) return 0
+		if(!i1) return -1
+		if(!i2) return 1
 	}
 }
-
-# Cgi - Разбор параметров запроса
-sub Cgi {
-	defined ($_ = $ENV{'REQUEST_METHOD'}) or return;
-	if($_ eq 'GET') {
-		Set \%CGI, '&' if defined ($_ = $ENV{'QUERY_STRING'})
-	} elsif($_ eq 'POST' and defined $ENV{'CONTENT_LENGTH'} and
-			defined ($_ = $ENV{'CONTENT_TYPE'}) and
-			s/^multipart\/form-data; boundary=//) {
-		my($k, $v, $s, $f, $m, $n);
-		my($b, $c) = ($_, 'Content-Disposition: form-data; name');
-		while(<>) {
-			if($s and /^\s*$/) {
-				$s = undef
-			} elsif(/^--\Q$b\E(--)?\s+$/) {
-				if(defined $k) {
-					$_ = $CGI{$k};
-					$CGI{$k} = defined $_ ? "$_\n$v" : $v;
-					$k = undef
-				}
-				$v = $f = undef
-			} elsif(defined $f) {
-				if(not defined $m) {
-					s/^Content-Type: //;
-					s/\s+$//;
-					($s, $m) = (1, $_)
-				}
-			} elsif(defined $k) {
-				s/\s+$//;
-				$v = defined $v ? "$v\n$_": $_
-			} elsif(/^$c="([^"]*)"(; filename="([^"]*)")?\s+$/) {
-				$k = $1;
-				if(defined $2) {
-					($f, $m, $n) = (($v = $3), undef, '')
-				} else {
-					($s, $v) = (1, undef)
-				}
+function cmp_ip(i1, v1, i2, v2, a, b) {
+	i1 = split(i1, a, "[.\n]")
+	i2 = split(i2, b, "[.\n]")
+	for(i1 = 0; i1++ < 4;) {
+		if(a[i1] > b[i1]) return 1
+		if(a[i1] < b[i1]) return -1
+	}
+}
+BEGIN {
+	N = 0
+	if(Bnd = ENVIRON["CONTENT_TYPE"]) {
+		Str="^multipart/form-data; boundary="; sub(Str, "", Bnd)
+		Str="^Content-Disposition: form-data; name="
+	}
+}
+END {
+	F = "Rdns.htm"
+	if((s = ENVIRON["DOCUMENT_ROOT"]) != "") F = s "/" F
+	print "Content-Type: text/html; charset=utf-8\n"
+	while((getline <F) > 0)
+		if($0 ~ /^<TR><TD>/) {
+			if(S == "") continue
+			split($0, a, /<TD>/); if(a[N] !~ S) continue
+			D[++i] = $0; R[sprintf("%s\n%05d", a[N], i)]
+		} else if($0 ~ /^<TR><TH/) {
+			n = 0; s = ""
+			while(match($0, /(<[^>]*>)([^<]*)(.*)/, a)) {
+				$0 = a[3]; if(!s) s = a[1]
+				else s = s a[1] "<INPUT NAME=\"col\" "\
+					"TYPE=\"radio\" VALUE=\"" n "\""\
+					(n++ == N ? " CHECKED" : "") ">" a[2]
 			}
-		}
+			print s; N += 2
+		} else if($0 ~ /^<H2 /) {
+			sub(/<\/H2>/, ""); print "<FORM METHOD=\"post\"",
+				"ENCTYPE=\"multipart/form-data\">\n" $0 "<BR>" \
+				"<INPUT NAME=\"ask\" TITLE=\"Шаблон поиска\"",
+				"PLACEHOLDER=\"Что ищем?\" VALUE=\"" A \
+				"\" onChange=\"this.form.submit()\"></H2>"
+		} else if($0 ~ /^<\/TABLE/) break
+		else print
+	if(N == 2) for(i in D) print D[i]
+	else {
+		if(N == 5) asorti(R, a, "cmp_domain")
+		else if(N == 6) asorti(R, a, "cmp_ip")
+		else asorti(R, a)
+		for(i in a) { sub(/^.*\n/, " ", a[i]); print D[strtonum(a[i])] }
 	}
-	if(defined ($_ = $ENV{'HTTP_COOKIE'})) {
-		my %h;
-		Set \%h, ';\s+';
-		foreach (keys %h) { defined $CGI{$_} or $CGI{$_} = $h{$_} }
-	}
-}
-
-#
-# Секция HTML тэгов
-#
-# Title [@title] - Атрибут TITLE
-sub Title { a 'TITLE', @_ }
-
-# A $href[, $txt[, @title]] - Гиперссылка A
-sub A {
-	my($h, $v) = @_;
-	defined $h and $h ne '' or return '';
-	defined $v and $v =~ /\S/ or $v = $h;
-	$h = a 'HREF', $h;
-	$h .= ' '. Title @_[2..$#_] if defined $_[2];
-	"<A $h>". h($v). '</A>'
-}
-
-# Input $type, $name, $value[, @attr] - Тэг INPUT
-sub Input {
-	join ' ', '<INPUT', a('TYPE', shift), a('NAME', shift),
-		a('VALUE', shift), @_, '/>'
-}
-
-# CheckBox @attr - Поле выбора
-sub CheckBox { Input 'checkbox', @_ }
-
-# Submit @attr - Кнопка SUBMIT
-sub Submit { Input 'submit', @_ }
-
-# Reset @attr - Кнопка RESET
-sub Reset { Input 'reset', @_ }
-
-# Hidden @attr - Теневой параметр HIDDEN
-sub Hidden { Input 'hidden', @_ }
-
-# Text @attr - Однострочное поле ввода TEXT
-sub Text { Input 'text', @_ }
-
-# Area $name, $value - Многострочное поле ввода TEXTAREA
-sub Area { '<TEXTAREA NAME="'. (shift). "\">". h(shift). '</TEXTAREA>' }
-
-# Option $value, $txt, $title[, @attr] - Пункт списка вариантов OPTION
-sub Option {
-	my($v, $t) = (a('VALUE', shift), h(shift));
-	join(' ', '<OPTION', $v, Title(shift), @_). ">$t</OPTION>"
-}
-
-# Options $@opt - Список вариантов OPTION
-sub Options {
-	my($a, $p) = (shift);
-	foreach $p (@$a) { push @_, Option @$p }
-	@_
-}
-
-# Select $name, $@opt[, @attr] - Список вариантов SELECT
-sub Select {
-	my($n, $o) = (a('NAME', shift), shift);
-	join "\n", join(' ', '<SELECT', $n, @_). '>', Options($o), '</SELECT>'
-}
-
-# Form @html- Форма ввода данных
-sub Form {
-	$_ = defined ($_ = $ENV{'SCRIPT_NAME'}) ? u($_) : '';
-	'<FORM METHOD="post" ENCTYPE="multipart/form-data" ACTION="'. $_. '">',
-	@_, "\n</FORM>\n"
-}
-
-# TR @html - Строка таблицы
-sub TR { join '', '<TR>', @_, "</TR>\n" }
-
-# TH @html - Ячейка заголовка таблицы
-sub TH { map {"<TH>$_</TH>"} @_ }
-
-# TD @html - Ячейка таблицы
-sub TD { map {"<TD>$_</TD>"} @_ }
-
-#
-# Секция работы с БД
-#
-my $DB;		# Интерфейс БД
-my $DBE;	# Ошибка БД
-
-# DBerr [@txt] - Обработка ошибки и закрытие БД
-sub DBerr {
-	$DB or return undef;
-	$DBE = "Ошибка выполнения «@_» - ". $DB->errstr if @_;
-	DBI->disconnect_all();
-	$DB = undef
-}
-
-# SqlDo @sql - Выполнение простой SQL команды
-sub SqlDo { $DB and $DB->do("@_") or DBerr "@_" }
-
-# DBinit - Открытие БД
-sub DBinit {
-	$DB = DBI->connect("dbi:SQLite:dbname=$DBNAME", '', '',
-		{PrintError => 0}) or $DBE = "Ошибка открытия базы $DBNAME";
-	$DB
-}
-
-# DBend - Завершение работы с БД
-sub DBend { DBerr; return $DBE }
-
-# Sql @sql - Выполнение сложной SQL команды
-sub Sql {
-	my $q;
-	$DB and $q = $DB->prepare("@_") and $q->execute() and return $q;
-	DBerr "@_"
-}
-
-# SqlRow $que - Получить данные
-sub SqlRow { return $_[0] ? $_[0]->fetchrow_array() : () }
-
-# SqlTxt @txt - Экранирование кавычек
-sub SqlTxt {
-	if(($_ = "@_") eq '') { return 'NULL' } else { s/'/''/g; return "'$_'" }
-}
-
-#
-# Секция выполнения
-#
-Cgi;
-
-# Поля DB
-my @FIL = ('src', 'dst', 'line', 'ip', 'mac', 'opt', 'ts', 'sys');
-# Поля поиска
-my @TAB = (
-	[(0, 'Domain', 'Сетевое имя устройства')]
-,	[(1, 'Target','Сопряженное устройство')]
-,	[(2, 'Подключение', 'Маркировка порта СКС или соединительного кабеля')]
-,	[(3, 'IP адрес', 'IP адрес устройства')]
-,	[(4, 'MAC адрес', 'MAC адрес устройства')]
-,	[(5, 'Параметры', 'Параметры подключения')]
-,	[(6, 'TimeStamp', 'Время подключения')]
-,	[(7, 'Устройство', 'Имя устройства (инвентарный №)')]
-);
-
-my $ASK = '';	# Шаблон поиска
-my $COL = 0;	# № поля поиска
-$ASK = $_ if defined ($_ = $CGI{'ask'});
-$COL = $_ if defined ($_ = $CGI{'col'}) and /^(0|([1-9]\d*))$/ and $_ <= $#FIL;
-push @{$TAB[$COL]}, 'SELECTED';	# Отмечаем выбранную колонку
-
-# Шапка ответа
-print	'Content-Language: ru
-Content-Type: text/html; charset=utf-8
-
-<!DOCTYPE html>
-<HTML LANG="ru">
-<HEAD>
-<TITLE>Rdns</TITLE>
-<META HTTP-EQUIV="Content-Language" CONTENT="ru" />
-<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=utf-8" />
-<META HTTP-EQUIV="Pragma" CONTENT="no-cache" />
-</HEAD>
-<BODY>
-<H2 ALIGN="center">Таблица подключений</H2>
-';
-
-# Форма запроса
-print	Form Select('col', \@TAB, Title('Поле поиска')),
-	Text('ask', $ASK, Title('Шаблон поиска')),
-	Submit('go', 'Искать', Title('Выполнить поиск'));
-
-# Собственно ответ
-if($ASK ne '' and DBinit) {
-	my $q = 'SELECT * FROM db';
-	$COL == 0 and $ASK eq '*' or $q = $q .
-		" WHERE $FIL[$COL] GLOB ". SqlTxt($ASK). " ORDER BY $FIL[$COL]";
-	print "<HR />\n", '<TABLE BORDER="1" CELLSPACING="0">', "\n",
-		TR TH map {$_->[1]} @TAB;
-	$q = Sql $q;
-	while(@_ = SqlRow $q) { print TR TD map {h $_} @_ }
-	print "</TABLE>\n"
-}
-print "<HR />\n", h($_), "\n" if $_ = DBend;
-
-# Завершение ответа
-print '<HR />
-<P ALIGN="right" STYLE="font: italic 70% small-caption;">', $SIG,
-'</P>
-</BODY>
-</HTML>
-'
+	print $0 "\n</FORM>"
+	if(S == "") print "<P>Шаблон поиска представляет собой образец (набор",
+		"образцов), на основании совпадения с которым заданного поля,",
+		"выводятся строки таблицы.\n<p>Образец строится из элементов,",
+		"для разделения образцов используется символ «<B>|</B>».\n"\
+		"<TABLE>\n<TR><TD COLSPAN=\"2\">Элементы:\n<TR><TD><TD>-",
+		"любой алфавитно-цифровой символ (специальные символы: «<B>.",
+		"? * + \\ ( ) [ ] { } |</B>» - должны предваряться символом",
+		"«<B>\\</B>»)\n<TR><TD><B>.</B><TD>- любой символ из",
+		"доступных\n<TR><TD STYLE=\"vertical-align:top\"><B>[]</B>"\
+		"<TD>- символ из набора перечисленных, если набор начинается с",
+		"«<B>^</B>», то любой символ, за исключением перечисленных;"\
+		"<BR>два символа через «<B>-</B>» задают диапазон перечисления",
+		"(например: «<B>[5-7]</B>» определяет символ «<B>5</B>» или",
+		"«<B>6</B>» или «<B>7</B>»)\n<TR><TD><B>()</B><TD>-",
+		"группировка элементов\n<TR><TD><BR><TD>\n<TR><TD",
+		"COLSPAN=\"2\">Повторы:\n<TR><TD><B>?</B><TD>- элемент может",
+		"встретиться <B>0</B> или <B>1</B> раз\n<TR><TD><B>*</B><TD>-",
+		"элемент может встретиться <B>0</B> или более раз\n<TR><TD>"\
+		"<B>+</B><TD>- элемент должен встретиться <B>1</B> или более",
+		"раз\n<TR><TD><B>{N}</B><TD>- элемент должен встретиться ровно",
+		"<B>N</B> раз\n<TR><TD><B>{N,}</B><TD>- элемент должен",
+		"встретиться <B>N</B> раз или более\n<TR><TD><B>{,M}</B><TD>-",
+		"элемент может встретиться не более <B>M</B> раз\n<TR><TD>"\
+		"<B>{N,M}</B><TD>- элемент должен встретиться как минимум",
+		"<B>N</B>, но не более <B>M</B> раз\n<TR><TD><BR><TD>\n<TR><TD",
+		"COLSPAN=\"2\">Якоря:\n<TR><TD><B>^</B><TD>- в начале образца,",
+		"обозначает привязку к началу поля\n<TR><TD><B>$</B><TD>- в",
+		"конце образца, обозначает привязку к концу поля\n</TABLE>\n"\
+		"<HR>"
+	print "<P STYLE=\"text-align:right;font:italic 70% small-caption;\">"\
+		"@(#) Rdns.cgi V3.1 © 2015-2023 by Roman Oreshnikov</P>"
+	while((getline <F) >0) print
+}'

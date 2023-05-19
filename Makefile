@@ -1,112 +1,77 @@
 #
-#	@(#) Makefile V2.4 (C) 2010-2019 by Roman Oreshnikov
+#	@(#) Makefile V3.1 (C) 2010-2023 by Roman Oreshnikov
 #
-# Сценарий работ учета сетевых подключений и управления DNS
+# Сценарий работ по созданию таблиц подключений к ЛВС и внесения изменений в DNS
 #
 
-# Рабочие файлы (порядок важен)
-CFG	= Rdns.tst
+# Исходные рабочие файлы (порядок важен)
+CFG	= Rdns.cfg
 
-# MS AD домены (для исключений)
-AD	=
+# Каталог для результирующих файлов
+#WRK	:= /var/Rdns/
 
-# Каталоги для работ с DNS
-DIR	= $(PWD)/dns
-CUR	= $(DIR)/cur
-NEW	= $(DIR)/new
+# Версия пакета
+VER	:= $(shell sed '/@(#)/!d;s/.*V\([0-9.]*\).*/\1/' Makefile)
 
-# Скрипт получения текущих мастер-зон с NS
-DIG	= $(DIR)/dns.dig
+# Константы
+BIN	:= Rdns			# Основной скрипт
+CGI	:= Rdns.cgi		# Скрипт визуализации
+CHK	:= Rchk			# Скрипт тестирования
+DIR	:= $(WRK)Rdns.d		# Каталог описания зон
+DNS	:= $(WRK)Rdns.dns	# Файл актуальных DNS записей
+HTM	:= $(WRK)Rdns.htm	# Таблица объектов
+LOG	:= $(WRK)Rdns.log	# Файл протокола тестирования
+LST	:= $(WRK)Rdns.lst	# Перечень мастер-зон в формате BIND
+OPT	:= -t $(HTM)		# При актуализации DNS, строим таблицу 
+TAR 	:= Rdns-$(VER).tar.xz	# Дистрибутивный архив
+#TMP	:= $(WRK)Rdns.tmp	# Каталог для автотеста
+TST	:= Rdns.tst		# Сценарий автотеста
+#UPD	:= -u			# Ключ актуализации DNS записей
 
-# Перечень мастер-зон в формате конфигурации BIND
-LST	= $(DIR)/dns.lst
+.PHONY:	bind clean dist help html list sync test
 
-# Таблица соединений
-TAB	= $(DIR)/dns.htm
+bind:	$(DNS)
 
-# SQLite3 dump
-SQL	= $(DIR)/dns.sql
-
-# SQLite3 база
-DB	= $(DIR)/dns.db
-
-# Мастер сервер
-MAIN	= 127.0.0.1
-
-# Управляемые NS сервера
-SRV	=
-
-# Исходники
-SRC	= Named.conf Rdns.cfg Rdns.cgi Rdns.pl Rdns.tst RdnsUp.pl
-
-# Default target
-ALL:	$(DIR)/dns.ok
-
-# Сверка мастер-зон с обновлением DNS RRs и сохранение актуальных мастер-зон
-$(DIR)/dns.ok:	$(DIG)
-	@[ -d "$(CUR)" ] || make NS; \
-	if [ -d "$(NEW)" ]; then \
-		umask 002; echo "### Checking zones"; \
-		./RdnsUp.pl -is -a "$(AD)" $(CUR) $(NEW) && \
-		/bin/rm -rf $(CUR) && /bin/mv $(NEW) $(CUR); \
-	fi; >$@
-
-# Выгрузка мастер-зон с NS
-NS:	$(DIG)
-	@umask 002; echo "### Geting zones from NS"; \
-	if [ -d "$(CUR)" ]; then /bin/rm -f $(CUR)/*; \
-	else /bin/mkdir -p "$(CUR)"; fi; \
-	cd $(CUR) && . $(DIG)
-
-# Обработка конфигурационных файлов
-$(DIG):	$(CFG)
-	@umask 002; echo "### Building the zones and support files"; \
-	if [ -d "$(NEW)" ]; then /bin/rm -f $(NEW)/*; \
-	else /bin/mkdir -p "$(NEW)"; fi; \
-	./Rdns.pl -c $(DIG) -d $(NEW) -l $(LST) -t $(TAB) -s $(SQL) $(CFG); \
-	/usr/bin/sqlite3 $(DB)~ '.read $(SQL)'; \
-	/bin/chmod g+w $(DB)~; \
-	/bin/mv $(DB)~ $(DB)
-
-# Создание архива конфигурации NS сервера
-$(DIR)/dns.tar: Named.conf
-	@umask 002; echo "### Build configs for servers"; \
-	/bin/mkdir -p $(DIR)/etc/named $(DIR)/var/named; \
-	/bin/cp Named.conf $(DIR)/etc/named; \
-	/bin/sed -e 's/Main/Slave/;s/Named/named/g;/allow-update/d' \
-                -e 's/.*also-notify.*/\tnotify no;/' \
-                -e 's/master;$$/slave;\n\tmasters { $(MAIN); };/' \
-		Named.conf >$(DIR)/etc/named/named.conf; \
-	/bin/tar -C $(DIR) --remove-files --owner=named --group=named -cf $@ \
-		etc var
-
-# Копирование конфигурации на NS сервера
-DNS: $(DIR)/dns.tar
-	@echo "### Install configs to NS"; \
-	for H in $(SRV); do \
-		/bin/cat $(DIR)/dns.tar | /usr/bin/ssh $$H /usr/bin/sudo \
-		/bin/tar -C / -xf - etc/named/Named.conf etc/named/named.conf \
-		/usr/bin/ssh $$H /usr/sbin/rndc reconfig; \
-	done
-
-# Сброс кэша NS серверов
-flush:
-	@echo "### Flushes all of the server's caches"; \
-	for H in $(SRV); do /usr/bin/ssh $$H /usr/sbin/rndc flush; done
-
-# Зачистка
 clean:
-	@echo "### Cleaning the work directory"; /bin/rm -rf $(DIR)
+	@rm -rf $(DIR) $(DNS) $(HTM) $(LOG) $(LST) $(TAR) $(TMP)
 
-# Создание дистрибутива
-dist: Makefile $(SRC)
-	@set -e; \
-	D=`/bin/sed '/@(#)/!d;s/^.*V\([^ ]*\).*/Rdns-\1/;q' Makefile`; \
-	echo "Create $$D.tar.xz"; \
-	[ ! -d "$$D" ] || /bin/rm -rf "$$D"; /bin/mkdir "$$D"; \
-	/bin/cp Makefile "$$D"; \
-	V=`/bin/sed '/@(#)/!d;s/^.*\(V.*\)$$/\1/;q' Makefile`; \
-	for F in $(SRC); do \
-		/bin/sed "s/\(@(#)\).*/\1 $$F $$V/" $$F >"$$D/$$F"; \
-	done; \
-	/bin/tar cf - --remove-files "$$D" | /usr/bin/xz -9c >"$$D.tar.xz"
+dist:
+	@tar -caf $(TAR) Makefile README $(BIN) $(CGI) $(CHK) $(TST)
+
+help:
+	@echo "  Доступные цели (по умолчанию - bind):";\
+	[ -z "$(OPT)" ] && D= || D=" и таблицу объектов '$(strip $(HTM))'";\
+	S=", сверить DNS записи";\
+	echo "bind  - Создать '$(strip $(DNS))'$$D$$S";\
+	echo "clean - Удалить целевые файлы и каталоги";\
+	echo "dist  - Создать дистрибутивный архив '$(strip $(TAR))'";\
+	echo "help  - Вывести справку по целям";\
+	echo "html  - Создать таблицу объектов '$(strip $(HTM))'";\
+	echo "list  - Создать список обслуживаемых зон '$(strip $(LST))'";\
+	echo "sync  - Получить зоны с NS сервера в '$(strip $(DNS))'$$S";\
+	echo "test  - Выполнить автотест работоспособности '$(strip $(TST))'";\
+	echo "zone  - Создать файлы описания зон в каталоге '$(strip $(DIR))'"
+
+html:	$(HTM)
+
+list:	$(LST)
+
+sync:	$(CFG)
+	@$(SHELL) ./$(BIN) -x -c $(DNS) $(OPT) $^
+
+test:	$(TST)
+	@T=$(TMP); $(SHELL) ./$(CHK) -l $(LOG) -r $(BIN) $${T:+-t $(TMP)} $^
+
+zone:	$(DIR)
+
+$(DIR):	$(CFG)
+	@mkdir -p $(DIR); $(SHELL) ./$(BIN) -d $(DIR) $^
+
+$(DNS):	$(CFG)
+	@$(SHELL) ./$(BIN) $(UPD) -c $(DNS) $(OPT) $^
+
+$(HTM): $(CFG)
+	@$(SHELL) ./$(BIN) -t $(HTM) $^
+
+$(LST):	$(CFG)
+	@$(SHELL) ./$(BIN) -l $(LST) $^
