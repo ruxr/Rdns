@@ -542,6 +542,15 @@ function SaveTab(a) {
 	TH("Дополнительная информация", "Примечания") >n
 	asorti(Obj, a)
 	for(d in a) print TR(a[d]) >n
+	asorti(Lnk, a)
+	for(d in a) {
+		d = a[d]
+		for(i = 0; i++ < 2;) if((v = Lnk[d][i]) ~ / /) {
+			sub(/ /, "", v)
+			print "<TR><TD>=<TD>" Htm(d) "<TD>" Htm(v)\
+				"<TD><TD><TD><TD><TD><TD><TD>" >n
+		}
+	}
 	print "</TABLE>\n</BODY>\n</HTML>" >n
 	close(n)
 }
