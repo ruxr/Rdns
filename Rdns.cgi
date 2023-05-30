@@ -26,8 +26,10 @@ awk '
 	gsub(/"/, "\\&quot;", A)
 }
 function cmp_domain(i1, v1, i2, v2, a, b) {
-	i1 = split(i1, a, "[.\n]")
-	i2 = split(i2, b, "[.\n]")
+	sub(/[\n<].*/, "", i1)
+	sub(/[\n<].*/, "", i2)
+	i1 = split(i1, a, /\./)
+	i2 = split(i2, b, /\./)
 	for(;;) {
 		if(a[i1] > b[i2]) return 1
 		if(a[i1--] < b[i2--]) return -1
@@ -37,8 +39,8 @@ function cmp_domain(i1, v1, i2, v2, a, b) {
 	}
 }
 function cmp_ip(i1, v1, i2, v2, a, b) {
-	i1 = split(i1, a, "[.\n]")
-	i2 = split(i2, b, "[.\n]")
+	i1 = split(i1, a, /[.\n]/)
+	i2 = split(i2, b, /[.\n]/)
 	for(i1 = 0; i1++ < 4;) {
 		if(a[i1] > b[i1]) return 1
 		if(a[i1] < b[i1]) return -1
