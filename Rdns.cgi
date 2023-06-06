@@ -61,7 +61,7 @@ END {
 		if($0 ~ /^<TR><TD>/) {
 			if(S == "") continue
 			split($0, a, /<TD>/); if(a[N] !~ S) continue
-			D[++i] = $0; R[sprintf("%s\n%05d", a[N], i)]
+			D[++i] = $0; R[sprintf("%s\n%7d", a[N], i)]
 		} else if($0 ~ /^<TR><TH/) {
 			n = 0; s = ""
 			while(match($0, /(<[^>]*>)([^<]*)(.*)/, a)) {
@@ -84,7 +84,7 @@ END {
 		if(N == 5) asorti(R, a, "cmp_domain")
 		else if(N == 6) asorti(R, a, "cmp_ip")
 		else asorti(R, a)
-		for(i in a) { sub(/^.*\n/, " ", a[i]); print D[strtonum(a[i])] }
+		for(i in a) { sub(/^.*\n\s*/, "", a[i]); print D[a[i]] }
 	}
 	print $0 "\n</FORM>"
 	if(S == "") print "<P>Шаблон поиска представляет собой образец (набор",
