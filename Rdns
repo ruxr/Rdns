@@ -568,7 +568,7 @@ function TR(n, a, d, i, s, t, v) {
 	v = Htm(n)
 	for(s = 0; s++ < 9;) {
 		t = Htm(Obj[n][s])
-		if(s ~ /[23]/) gsub(" ", "<BR>", t)
+		if(s ~ /[2-4]/) gsub(" ", "<BR>", t)
 		v = v "<TD>" t
 	}
 	return "<TR><TD>" v
