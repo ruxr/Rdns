@@ -280,12 +280,22 @@ BEGIN {
 		else if(!isName($2)) ErrS($2, "недопустимое имя доменной зоны")
 		else if(isReName()) ErrS($2, "в зарезервированной зоне")
 		else newZone(name)
-	} else if($1 == ".Join") {
-		if(chkNF(NF == 3))
-		if($2 == $3) ErrU($2)
-		else if($2 ~ /^[?-]$/) ErrP($2, $1)
-		else if($3 ~ /^[?-]$/) ErrP($3, $1)
-		else if(newJoin($2, " " $3)) newJoin($3, " " $2)
+	} else if($1 == "=") {
+		s = ""
+		if(match($0, /\s+\/(.*)$/, a)) { s = a[1]; sub(/\s+\/.*/, "") }
+		if(chkNF(NF > 2)) {
+			delete a
+			for(i = 1; i++ < NF;)
+				if($i ~ /^[?-]$/) { ErrP($i, $1); break }
+				else if($i in a) { ErrU($i); break }
+				else a[$i]
+			if(length(a) == NF - 1) {
+				if(s) Lnk[$2][3] = s
+				for(i = 2; i++ < NF;)
+					if(!(newJoin($(i - 1), " " $i) &&
+					newJoin($i, " " $(i - 1)))) break
+			}
+		}
 	} else if($2 ~ /^([0-9]+|A|AAAA|CNAME|IN|MX|NS|PTR|SOA|SRV|TXT)$/) {
 		i = 2; v = ttl
 		if($i ~ /^[0-9]/ && (v = isTTL("ttl", $(i++))) == "") next
@@ -548,7 +558,7 @@ function SaveTab(a) {
 		for(i = 0; i++ < 2;) if((v = Lnk[d][i]) ~ / /) {
 			sub(/ /, "", v)
 			print "<TR><TD>=<TD>" Htm(d) "<TD>" Htm(v)\
-				"<TD><TD><TD><TD><TD><TD><TD>" >n
+				"<TD><TD><TD><TD><TD><TD><TD>" Htm(Lnk[d][3]) >n
 		}
 	}
 	print "</TABLE>\n</BODY>\n</HTML>" >n
