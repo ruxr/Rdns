@@ -39,11 +39,11 @@ function cmp_domain(i1, v1, i2, v2, a, b) {
 	}
 }
 function cmp_ip(i1, v1, i2, v2, a, b) {
-	i1 = split(i1, a, /[.\n]/)
-	i2 = split(i2, b, /[.\n]/)
+	split(i1, a, /[.\n<]/)
+	split(i2, b, /[.\n<]/)
 	for(i1 = 0; i1++ < 4;) {
-		if(a[i1] > b[i1]) return 1
-		if(a[i1] < b[i1]) return -1
+		if(int(a[i1]) > int(b[i1])) return 1
+		if(int(a[i1]) < int(b[i1])) return -1
 	}
 }
 BEGIN {
