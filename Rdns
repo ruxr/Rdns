@@ -268,17 +268,21 @@ BEGIN {
 	#	3 - domain
 	#	4 - ip
 	#	5 - mac-address
-	#	6 - options
+	#	6 - параметры
 	#	7 - заводской №
-	#	8 - инвентарный
-	#	9 - note
+	#	8 - инвентарный №
+	#	9 - примечания
 	t = "[a-z0-9A-Z]"
 	lnk = "^@/?(" t "+(-" t "+)*\\.)*" t "+(-" t "+)*$"
 	obj = "^" t "+(-" t "+)*(/.*)*$"
 }
 /^\s*([#;].*)*$/ { next }
 {
-	sub(/\s+;.*$/, "")
+	for(;;) {
+		sub(/\s+;.*$/, "")
+		if(!sub(/\s*\\$/, "")) break
+		i = $0; getline; $0 = i "\n" $0
+	} 
 	if($1 == "$ORIGIN") {
 		if(chkNF(NF == 2) && isOrigin($2)) origin = name
 	} else if($1 == "$TTL") {
