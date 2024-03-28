@@ -150,15 +150,23 @@ function newZone(d) {
 function newZoneIP() {
 	match($2, "([^/]*)/(.*)", a)
 	if(isIP(a[1]) == "") return ErrP(a[1], "IP зоны")
-	if(a[2] !~ /^(1?[0-9]|2[0-4])$/) return ErrP(a[2], "битовой маски")
+	if(a[2] !~ /^([1-2]?[0-9]|3[12])$/) return ErrP(a[2], "битовой маски")
 	if(and(ip, rshift(0xffffffff, a[2])))
 		return ErrS(a[2], "битовая маска мала")
 	if(isReIP()) return ErrZ($2, "зона ")
-	n = int2Arpa()
+	d = int2Arpa()
 	s = 4 - rshift(a[2] + 7, 3)
 	v = and(rshift(256, and(a[2], 7)), 255)
-	match(n, "(0\\.){" s "}([0-9]*)(.*)", a)
-	while(newZone(a[2] a[3]) && --v > 0) a[2]++
+	if(s) {
+		match(d, "(0\\.){" s "}([0-9]*)(.*)", a)
+		while(newZone(a[2] a[3]) && --v > 0) a[2]++
+	} else {
+		match(d, "([0-9]*)(.*)", a)
+		if(newZone(d)) while(--v) {
+			Zone[s = ++a[1] a[2]] = ""
+			Sub[s] = d
+		}
+	}
 }
 function newRR(v, d, t, r, x) {
 	if((t == "PTR" ? isArpa(d) : isDomain(d)) == "") return
@@ -191,7 +199,7 @@ function newRR(v, d, t, r, x) {
 		if(t == "PTR") IP[int2IP(ip)] = r
 		else if(t == "A" && !(r in IP)) IP[r] = d
 	}
-	if(!RR[d][""]) RR[d][""] = z
+	if(!RR[d][""]) RR[d][""] = Sub[z] ? Sub[z] : z
 	return RR[d][t][r] = v
 }
 function newIP(d, i, x) {
@@ -251,6 +259,7 @@ BEGIN {
 	# RR[domain][type][rdata] = ttl	# DNS записи
 	# IP[ip] = domain		# Привязка IP к домену
 	# Zone[domain] = ""|ns		# Зоны, наши если ns
+	# Sub[zone] = domain		# Родительская зона
 	# Use[val]			# Используемые данные
 	# Lnk[line][1|2] = obj|line	# Соединительная линия
 	# Obj[obj][1-8]			# Объект
