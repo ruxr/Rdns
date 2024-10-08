@@ -14,7 +14,7 @@ awk '
 	getline
 	sub(/^\s*/, "")
 	sub(/\s*$/, "")
-	if(n == "col") { if($0 ~ /^[0-9]$/) N = $0; next }
+	if(n == "col") { if($0 ~ /^1?[0-9]$/) N = $0; next }
 	else if($0 ~ /[\\{}()\[\]]/) {
 		s = $0; gsub(/\\./, " ", s); if(s ~ /\\/) next
 		gsub(/\[[^\]]+\]/, " ", s); if(s ~ /[\[\]]/) next

@@ -225,14 +225,14 @@ ns	10.0.0.1			; Ok'
 
 Tst 1:30	Проверка ошибок объявления объектов и использования кроссовых соединений
 	Cfg '
-	a L1 aa:aa:bb:bb:cc:cc #1	; Ok
-	a - aa:aa:bb:bb:cc:cc #1	; дубликат
-	b L1 dd:dd:ee:ee:ff:ff #2	; Ok
-	c L1 ab:cd:ef:01:23:45 #3	; линия уже занята
-	d L123 aa:aa:bb:bb:cc:cc #4	; повтор мас-адреса
-	e L123 01:23:45:67:89:1a #1	; повтор инвентарного №
+	a L1 aa:aa:bb:bb:cc:cc +1	; Ok
+	a - aa:aa:bb:bb:cc:cc +1	; дубликат
+	b L1 dd:dd:ee:ee:ff:ff +2	; Ok
+	c L1 ab:cd:ef:01:23:45 +3	; линия уже занята
+	d L123 aa:aa:bb:bb:cc:cc +4	; повтор мас-адреса
+	e L123 01:23:45:67:89:1a +1	; повтор инвентарного №
 	f 12:34:56:78:9A:BC 12:34:56:78:9a:bc ; повтор задания мас-адреса
-	g ? 12:34:56:78:9a:bd #5 #6	; повтор задания инвентарного №
+	g ? 12:34:56:78:9a:bd +5 +6	; повтор задания инвентарного №
 	=			; мало параметров
 	= L2 /			; мало параметров
 	= ? -			; зарезервированные имена
@@ -316,7 +316,7 @@ www		CNAME	fs
 =	V1-2	V3-2
 =	L13	V1-3	L31	/Проброс порта
 # Телекоммуникационное оборудование
-switch		-	#1234	/Коммутатор ЛВС
+switch		-	+1234	/Коммутатор ЛВС
 switch/Po1	-	Vlan2
 switch/G01	E-gw/2	Trunk
 switch/G02	E-ups	Vlan1
@@ -343,7 +343,7 @@ switch/G23	L20	Vlan3 PortSecurity
 switch/G24	L22	Vlan3 PortSecurity
 switch/Vlan1	-	@sw
 #
-router		-	#12345 /Маршрутизатор ЛВС
+router		-	+12345 /Маршрутизатор ЛВС
 router/G1	V3-1	00:01:23:45:67:89	@gw-lvs-main	/ ЛВС-Центр
 router/G2	E-gw/2	00:01:23:45:67:89	Trunk		/ ЛВС
 router/G3	V3-2	00:01:23:45:67:89	@gw-lvs-slave	/ ЛВС-Филиал
@@ -361,36 +361,36 @@ fo2e-2		-	#A-32-2	/Конвертер FO<->Ethernet
 fo2e-2/F	V1-2
 fo2e-2/L	FiberOpticCable02
 # Серверное оборудование
-server01	-	#123456	/ns+mail
+server01	-	+123456	/ns+mail
 server01/G1	E-s01/1	11:01:23:45:67:89 @ns.my
 server01/G2	E-s01/2	11:01:23:45:67:8a @mail
 server01/M	E-s01/M	11:01:23:45:67:8b @ilo1
 #
-server02	-	#123457	/Файловый сервер
+server02	-	+123457	/Файловый сервер
 server02/Bond	-	@fs
 server02/G1	E-s02/1	12:01:23:45:67:aa @/Bond
 server02/G2	E-s02/2	12:01:23:45:67:ab @/Bond
 server02/M	E-s02/M	12:01:23:45:67:ac @ilo2
 #
-server03	-	#123458	/1 узел кластера
+server03	-	+123458	/1 узел кластера
 server03/G1	E-s03/1	13:01:23:45:67:1a @Cluster @node01
 server03/G2	E-s03/2	13:01:23:45:67:1b
 server03/M	E-s03/M	13:01:23:45:67:1c @ilo3
 #
-server04	-	#123459 /2 узел кластера
+server04	-	+123459 /2 узел кластера
 server04/G1	E-s04/1	14:01:23:45:67:77 @Cluster @node02
 server04/G2	E-s04/2	14:01:23:45:67:78
 server04/M	E-s04/M	14:01:23:45:67:79 @ilo4
 #
-server05	-	#123460 /DHCP сервер
+server05	-	+123460 /DHCP сервер
 server05/G1	E-s05/1	15:01:23:45:67:31
 server05/G2	E-s05/2	15:01:23:45:67:32 @DHCP
 server05/M	E-s05/M	15:01:23:45:67:33 @ilo5
 # Клиентское оборудование
-arm		L10	aa:bb:cc:dd:ee:ff #567
-laptop		L20	bb:aa:cc:dd:ee:bb #345	@Boss
-mfu		L11	cc:aa:bb:cc:dd:cc #33-18
-printer		L22	dd:ee:ff:aa:bb:dd #66'
+arm		L10	aa:bb:cc:dd:ee:ff +567
+laptop		L20	bb:aa:cc:dd:ee:bb +345	@Boss
+mfu		L11	cc:aa:bb:cc:dd:cc +33-18
+printer		L22	dd:ee:ff:aa:bb:dd +66'
 	Run -c Rdns.dns -l Rdns.lst -t Rdns.htm $CFG
 
 Tst 0:102	Проверка файла с актуальными DNS записями
@@ -404,7 +404,7 @@ Tst 0:141	Проверка файлов описания зон
 	Run -d . $CFG
 	for F in *.arpa *domain; do Cat "$F"; echo; done
 
-Tst 0:89	Проверка файла с актуальной таблицей объектов
+Tst 0:91	Проверка файла с актуальной таблицей объектов
 	Cat Rdns.htm
 
 Tst 1:5	Проверка обнаружения ошибки в файле актуальных DNS записей
@@ -468,15 +468,15 @@ Tst 0:17	Проверка отправки обновлений DNS на NS се
 Tst 1:24	Проверка наличия различий в файле актуальных DNS записей
         Diff Rdns.dig Rdns.dns
 
-Tst 0:43	Проверка работоспособности Rdns.cgi
+Tst 0:44	Проверка работоспособности Rdns.cgi
 	RUN=$RUN.cgi
 	Ask | Run
 
-Tst 0:22	Проверка отработки поискового запроса в поле линии
+Tst 0:23	Проверка отработки поискового запроса в поле линии
 	Ask 1 "a" | Run
 
-Tst 0:25	Проверка отработки поискового запроса в поле DNS имени
+Tst 0:26	Проверка отработки поискового запроса в поле DNS имени
 	Ask 3 "^i" | Run
 
-Tst 0:26	Проверка отработки поискового запроса в поле IP адреса
+Tst 0:27	Проверка отработки поискового запроса в поле IP адреса
 	Ask 4 "10.10.2" | Run

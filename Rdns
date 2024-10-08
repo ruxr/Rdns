@@ -41,7 +41,6 @@ shift $(($OPTIND - 1))
 for P do [ -f "$P" -a -r "$P" ] || End "Файл '$P' недоступен!"; done
 [ -z "$RDNS_D" ] || mkdir -p "$RDNS_D" 2>/dev/null
 [ $? = 0 ] || End "Ошибка создания каталога '$RDNS_D'!"
-LANG=C
 awk '
 function Msg(s) { print "Rdns: " s }
 function End(s) { Msg(s); exit 1 }
@@ -51,7 +50,7 @@ function ErrD(s) { ErrS(s, "недопустимое доменное имя") }
 function ErrL(s, v, l){ ErrS(s, l "ссылка уже задана как " v) }
 function ErrP(s, v) { ErrS(s, "недопустимое значение для " v) }
 function ErrU(s) { ErrS(s, "уже используется") }
-function ErrV(s, v, u) { ErrS(v, s " уже задан как \"" u "\"") }
+function ErrV(s, v, u, t) { ErrS(v, s " уже задан" t " как \"" u "\"") }
 function ErrR(d, t, r) { ErrS(d " IN " t " " r, "RR уже зарегистрирована") }
 function ErrN(s, t) { ErrS(s, "незарегистрированная" t " зона") }
 function ErrZ(s, t) { ErrS(s, t "в зарезервированном IP блоке") }
@@ -150,7 +149,7 @@ function newZone(d) {
 function newZoneIP() {
 	match($2, "([^/]*)/(.*)", a)
 	if(isIP(a[1]) == "") return ErrP(a[1], "IP зоны")
-	if(a[2] !~ /^([1-2]?[0-9]|3[12])$/) return ErrP(a[2], "битовой маски")
+	if(a[2] !~ /^([1-2]?[0-9]|3[012])$/) return ErrP(a[2], "битовой маски")
 	if(and(ip, rshift(0xffffffff, a[2])))
 		return ErrS(a[2], "битовая маска мала")
 	if(isReIP()) return ErrZ($2, "зона ")
@@ -205,7 +204,7 @@ function newRR(v, d, t, r, x) {
 function newIP(d, i, x) {
 	return newRR(ttl, d, "A", i, x) && newRR(ttl, int2Arpa(), "PTR", d)
 }
-function newObj(a, i, l, m, s, z) {
+function newObj(a, i, l, s) {
 	Obj[n][1] = "?"
 	for(f = 1; f++ < NF; )
 		if($f ~ /^@/) {
@@ -218,23 +217,29 @@ function newObj(a, i, l, m, s, z) {
 			if(l == n) return ErrS($f, "ссылка на себя")
 			if(l in Obj && (t = Obj[l][1]) && t != "-")
 				return ErrS($f, "ссылка на физический объект")
-			if(t = Obj[l][2]) { t = t " "; Obj[l][1] = "-" }
+			if(t = Obj[l][2]) { t = t "\n"; Obj[l][1] = "-" }
 			Obj[l][2] = t n
 		} else if($f ~ /^\$/) {
-			if(z) ErrV("заводской №", $f, i)
-			else if($f in Use) return ErrU($f)
-			else { Use[z = $f]; sub(/\$/, "", $f); Obj[n][7] = $f }
-		} else if($f ~ /^#/) {
-			if(i) ErrV("инвентарный №", $f, i)
-			else if($f in Use) return ErrU($f)
-			else { Use[i = $f]; sub(/#/, "", $f); Obj[n][8] = $f }
+			if(7 in Obj[n])
+				return ErrV("заводской №", $f, Obj[n][7])
+			if($f in Use && Use[$f] != d) return ErrU($f)
+			Use[$f] = n; sub(/\$/, "", $f); Obj[n][7] = $f
+		} else if($f ~ /^\+/) {
+			if(8 in Obj[n])
+				return ErrV("инвентарный №", $f,  Obj[n][8])
+			if($f in Use) return ErrU($f)
+			Use[$f] = n;  sub(/\+/, "", $f); Obj[n][8] = $f
+		} else if($f ~ /^=/) {
+			if(11 in Obj[n])
+				return ErrV("место", $f, Obj[n][11], "о")
+			if($f ~ /\// && $f in Use) return ErrU($f)
+			Use[$f] = n; sub(/=/, "", $f); Obj[n][11] = $f
 		} else if($f ~ /^\//) {
-			sub(/^.*\s+\/\s*/, ""); sub(/\s+$/, "")
-			gsub(/\s+/, " "); Obj[n][9] = $0; break
+			sub(/^.*\s+\/\s*/, ""); Obj[n][12] = $0; break
 		} else if(t = isMac($f)) {
-			if(m) return ErrV("mac-адрес", $f, m)
-			else if((m = Use[t]) && m != d) return ErrU($f)
-			else Use[Obj[n][5] = m = t] = d
+			if(5 in Obj[n]) return ErrV("mac-адрес", $f, Obj[n][5])
+			else if(t in Use && Use[t] != d) return ErrU($f)
+			else Use[Obj[n][5] = t] = d
 		} else if(f == 2) {
 			if($f ~ /^[?-]$/) Obj[n][1] = $f
 			else if(newJoin($2, n)) Obj[n][1] = $2
@@ -242,8 +247,15 @@ function newObj(a, i, l, m, s, z) {
 		} else if($f in a) return ErrU($f)
 		else a[$f]
 	asorti(a)
-	for(i in a) s = s ? s " " a[i] : a[i]
+	for(i in a) s = s "\n" a[i]
 	Obj[n][6] = s
+}
+function Line(s, a, r, l) {
+	split(s, a)
+	for(i in a)
+		if((l += 1 + length(a[i])) < 61) r = r " " a[i]
+		else { l = length(a[i]); r = r "\n" a[i] }
+	return r
 }
 BEGIN {
 	Msg("Чтение исходных данных")
@@ -260,9 +272,9 @@ BEGIN {
 	# IP[ip] = domain		# Привязка IP к домену
 	# Zone[domain] = ""|ns		# Зоны, наши если ns
 	# Sub[zone] = domain		# Родительская зона
-	# Use[val]			# Используемые данные
+	# Use[val] = obj		# Используемые данные
 	# Lnk[line][1|2] = obj|line	# Соединительная линия
-	# Obj[obj][1-8]			# Объект
+	# Obj[obj][N]			# Объект
 	#	1 - линия
 	#	2 - сопряженный объект
 	#	3 - domain
@@ -271,7 +283,10 @@ BEGIN {
 	#	6 - параметры
 	#	7 - заводской №
 	#	8 - инвентарный №
-	#	9 - примечания
+	#	9 - наименование
+	#	10 - стоимость
+	#	11 - местоположение
+	#	12 - примечания
 	t = "[a-z0-9A-Z]"
 	lnk = "^@/?(" t "+(-" t "+)*\\.)*" t "+(-" t "+)*$"
 	obj = "^" t "+(-" t "+)*(/.*)*$"
@@ -282,7 +297,7 @@ BEGIN {
 		sub(/\s+;.*$/, "")
 		if(!sub(/\s*\\$/, "")) break
 		i = $0; getline; $0 = i "\n" $0
-	} 
+	}
 	if($1 == "$ORIGIN") {
 		if(chkNF(NF == 2) && isOrigin($2)) origin = name
 	} else if($1 == "$TTL") {
@@ -293,6 +308,13 @@ BEGIN {
 		else if(!isName($2)) ErrS($2, "недопустимое имя доменной зоны")
 		else if(isReName()) ErrS($2, "в зарезервированной зоне")
 		else newZone(name)
+	} else if($1 ~ /^\+/) {
+		if(!match($0, /^\s*\S+\s+(\S+)\s+(.*)\s*$/, a)) chkNF(0)
+		else if(!($1 in Use))
+			ErrS($1, "отсутствует объект с таким инвентарным №")
+		else if(10 in Obj[t = Use[$1]])
+			Err($1 " - дополнение уже использовано")
+		else { Obj[t][10] = a[1]; Obj[t][9] = Line(a[2]) }
 	} else if($1 == "=") {
 		s = ""
 		if(match($0, /\s+\/(.*)$/, a)) { s = a[1]; sub(/\s+\/.*/, "") }
@@ -421,9 +443,12 @@ function cmp_ip(i1, v1, i2, v2, a, b) {
 	}
 }
 function Htm(s) {
+	sub(/^\s+/, "", s)
+	sub(/\s+$/, "", s)
 	gsub(/&/, "\\&amp;", s)
 	gsub(/</, "\\&lt;", s)
 	gsub(/>/, "\\&gt;", s)
+	gsub(/\s*\n\s*/, "<BR>", s)
 	return s
 }
 function OutRR() {
@@ -550,18 +575,22 @@ function SaveTab(a) {
 	print "<!DOCTYPE html>\n<HTML>\n<HEAD>\n<META",
 	"HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html;",
 	"charset=utf-8\" />\n<META HTTP-EQUIV=\"Pragma\"",
-	"CONTENT=\"no-cache\" />\n<TITLE>" t "</TITLE>\n</HEAD>\n"\
+	"CONTENT=\"no-cache\" />\n<TITLE>" t "</TITLE>\n"\
+	"<STYLE>td, th { white-space:nowrap; }</STYLE>\n</HEAD>\n"\
 	"<BODY>\n<H2 ALIGN=\"center\">" t "</H2>\n<TABLE BORDER=\"1\"",
 	"CELLSPACING=\"0\" CELLPADING=\"0\">\n<TR>"\
 	TH("Техническое средство[/порт]", "Объект")\
 	TH("Маркировка порта СКС или соединительного кабеля", "Линия")\
 	TH("Сопряженный объект", "Подключение")\
-	TH("Сетевое имя технического средства", "DNS имя")\
-	TH("IP адрес технического средства", "IP адрес")\
-	TH("ARP MAC-адрес", "MAC адрес")\
-	TH("Параметры подключения", "Параметры")\
+	TH("Сетевое имя технического средства", "DNS")\
+	TH("IP адрес технического средства", "IP")\
+	TH("ARP MAC-адрес", "MAC")\
+	TH("Параметры для ТС", "Параметры")\
 	TH("Заводской номер ТС", "Зав.№")\
 	TH("Инвентарный номер ТС", "Инв.№")\
+	TH("Наименование ТС по бухгалтерскому учёту", "Наименование")\
+	TH("Стоимость ТС", "Цена")\
+	TH("Местоположение ТС", "Место")\
 	TH("Дополнительная информация", "Примечания") >n
 	asorti(Obj, a)
 	for(d in a) print TR(a[d]) >n
@@ -569,9 +598,9 @@ function SaveTab(a) {
 	for(d in a) {
 		d = a[d]
 		for(i = 0; i++ < 2;) if((v = Lnk[d][i]) ~ / /) {
-			sub(/ /, "", v)
 			print "<TR><TD>=<TD>" Htm(d) "<TD>" Htm(v)\
-				"<TD><TD><TD><TD><TD><TD><TD>" Htm(Lnk[d][3]) >n
+				"<TD><TD><TD><TD><TD><TD><TD><TD><TD><TD>"\
+				 Htm(Lnk[d][3]) >n
 		}
 	}
 	print "</TABLE>\n</BODY>\n</HTML>" >n
@@ -579,20 +608,17 @@ function SaveTab(a) {
 }
 function TH(t, v) { return "<TH TITLE=\"" t "\">" v }
 function TR(n, a, d, i, s, t, v) {
-	for(s in Obj[n]) if(s ~ /\.$/) d[s]; else if(s ~ /\./) i[s]
+	for(s in Obj[n])
+		if(s ~ /\.$/) { sub(/.$/, "", s); d[s] }
+		else if(s ~ /\./) i[s]
 	asorti(d, a, "cmp_domain")
-	for(s in a) t = t ? t a[s] " " : a[s] " "
-	gsub(/\. /, " ", t)
-	sub(/ $/, "", t)
-	Obj[n][3] = t
+	for(s in a) t = t "\n" a[s]
 	asorti(i, a, "cmp_ip")
-	for(s in a) v = v ? v " " a[s] : a[s]
-	Obj[n][4] = v
-	v = Htm(n)
-	for(s = 0; s++ < 9;) {
-		t = Htm(Obj[n][s])
-		if(s ~ /[2-4]/) gsub(" ", "<BR>", t)
-		v = v "<TD>" t
-	}
-	return "<TR><TD>" v
+	for(s in a) v = v "\n" a[s]
+	return "<TR><TD>" Htm(n) "<TD>" Htm(Obj[n][1]) "<TD>" Htm(Obj[n][2])\
+		"<TD>" Htm(t) "<TD>" Htm(v) "<TD>" Htm(Obj[n][5])\
+		"<TD>" Htm(Obj[n][6]) "<TD>" Htm(Obj[n][7])\
+		"<TD>" Htm(Obj[n][8]) "<TD>" Htm(Obj[n][9])\
+		"<TD>" Htm(Obj[n][10]) "<TD>" Htm(Obj[n][11])\
+		"<TD>" Htm(Obj[n][12])
 }' "$@"
