@@ -215,9 +215,9 @@ function newObj(a, i, l, s) {
 			else l = d $f
 			sub(/@/, "", l)
 			if(l == n) return ErrS($f, "ссылка на себя")
-			if(l in Obj && (t = Obj[l][1]) && t != "-")
+			if(l in Obj && Obj[l][1] !~ /^-?$/)
 				return ErrS($f, "ссылка на физический объект")
-			if(t = Obj[l][2]) { t = t "\n"; Obj[l][1] = "-" }
+			if(t = Obj[l][2]) t = t "\n"
 			Obj[l][2] = t n
 		} else if($f ~ /^\$/) {
 			if(7 in Obj[n])
@@ -226,9 +226,9 @@ function newObj(a, i, l, s) {
 			Use[$f] = n; sub(/\$/, "", $f); Obj[n][7] = $f
 		} else if($f ~ /^\+/) {
 			if(8 in Obj[n])
-				return ErrV("инвентарный №", $f,  Obj[n][8])
+				return ErrV("инвентарный №", $f, Obj[n][8])
 			if($f in Use) return ErrU($f)
-			Use[$f] = n;  sub(/\+/, "", $f); Obj[n][8] = $f
+			Use[$f] = n; sub(/\+/, "", $f); Obj[n][8] = $f
 		} else if($f ~ /^=/) {
 			if(11 in Obj[n])
 				return ErrV("место", $f, Obj[n][11], "о")
@@ -600,7 +600,7 @@ function SaveTab(a) {
 		for(i = 0; i++ < 2;) if((v = Lnk[d][i]) ~ / /) {
 			print "<TR><TD>=<TD>" Htm(d) "<TD>" Htm(v)\
 				"<TD><TD><TD><TD><TD><TD><TD><TD><TD><TD>"\
-				 Htm(Lnk[d][3]) >n
+				Htm(Lnk[d][3]) >n
 		}
 	}
 	print "</TABLE>\n</BODY>\n</HTML>" >n
